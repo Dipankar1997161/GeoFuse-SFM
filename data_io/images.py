@@ -58,8 +58,8 @@ def load_image(
             scale = resize_max / float(m)
             new_w = int(round(w * scale))
             new_h = int(round(h * scale))
-            interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-            img = cv2.resize(img, (new_w, new_h), interpolation=interp)
+            interp = INTER_AREA if scale < 1.0 else INTER_LINEAR
+            img = resize(img, (new_w, new_h), interpolation=interp)
 
     return img
 
