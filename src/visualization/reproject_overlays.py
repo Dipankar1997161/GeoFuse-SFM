@@ -44,6 +44,7 @@ def save_sparse_reprojection_overlays(
     cams=None,
     max_draw_points=2000,
     err_thresh_px=5.0,
+    all_points: bool = False,
 ):
     outp = Path(out_dir)
     outp.mkdir(parents=True, exist_ok=True)
@@ -64,6 +65,8 @@ def save_sparse_reprojection_overlays(
             # assume RGB -> BGR for OpenCV draw
             img = cvtColor(img, COLOR_RGB2BGR)
 
+        h, w = img.shape[:2]
+
         R, t = cam_poses[img_id]
         if multicam:
             K = cams[img_id].K if hasattr(cams[img_id], "K") else cams[img_id][0]
@@ -73,6 +76,36 @@ def save_sparse_reprojection_overlays(
         if K is None:
             raise ValueError("Need K_global (non-multicam) or cams (multicam).")
 
+        # ---------------------------------------------------------
+        # If requested: project ALL points into this image and draw them.
+        # Uses the canonical projector (project_points_geom) which returns NaNs for invalid depth.
+        # ---------------------------------------------------------
+        uv_all = None
+        valid_all = None
+        in_bounds_all = None
+
+        if all_points:
+            uv_all = project_points_geom(X=X, K=np.asarray(K), R=np.asarray(R), t=np.asarray(t))  # (N,2) with NaNs
+            valid_all = np.isfinite(uv_all).all(axis=1)
+
+            u = uv_all[:, 0]
+            v = uv_all[:, 1]
+            in_bounds_all = valid_all & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+
+            draw_ids = np.where(in_bounds_all)[0]
+            if draw_ids.size > 0:
+                # Sample if too many; otherwise the image becomes a solid blob
+                if draw_ids.size > max_draw_points:
+                    draw_ids = np.random.choice(draw_ids, size=max_draw_points, replace=False)
+
+                for pid in draw_ids:
+                    p = uv_all[pid]
+                    p_i = (int(round(p[0])), int(round(p[1])))
+                    circle(img, p_i, 2, (255, 255, 0), -1)  # cyan-ish (BGR)
+
+        # ---------------------------------------------------------
+        # Observed reprojection overlay (always useful; drawn on top)
+        # ---------------------------------------------------------
         obs_uv, proj_uv, errs = [], [], []
 
         for tid, pid in track_to_point.items():
@@ -83,10 +116,17 @@ def save_sparse_reprojection_overlays(
             kp_id = tr.obs[img_id]
             uv_obs = feats[img_id].kpts_xy[kp_id].astype(np.float64)
 
-            uv_proj_all, valid = project_points(K, R, t, X[pid : pid + 1])
-            if not valid[0]:
-                continue
-            uv_proj = uv_proj_all[0]
+            if all_points and uv_all is not None and valid_all is not None:
+                # Reuse precomputed projection for this point
+                if not valid_all[pid]:
+                    continue
+                uv_proj = uv_all[pid]
+            else:
+                # Original path (projects only observed points one-by-one)
+                uv_proj_all, valid = project_points(K, R, t, X[pid : pid + 1])
+                if not valid[0]:
+                    continue
+                uv_proj = uv_proj_all[0]
 
             e = float(np.linalg.norm(uv_proj - uv_obs))
             obs_uv.append(uv_obs)
@@ -94,13 +134,16 @@ def save_sparse_reprojection_overlays(
             errs.append(e)
 
         if not errs:
-            imwrite(str(outp / f"reproj_{img_id:03d}_noobs.png"), img)
+            # In all_points mode, you may still have drawn cyan points above
+            suffix = "noobs_all" if all_points else "noobs"
+            imwrite(str(outp / f"reproj_{img_id:03d}_{suffix}.png"), img)
             continue
 
         obs_uv = np.asarray(obs_uv)
         proj_uv = np.asarray(proj_uv)
         errs = np.asarray(errs)
 
+        # Draw worst errors first (your current behavior)
         idx = np.argsort(-errs)[:max_draw_points]
 
         for k in idx:
@@ -120,9 +163,14 @@ def save_sparse_reprojection_overlays(
             f"n={len(errs)} mean={errs.mean():.1f}px med={np.median(errs):.1f}px "
             f"p95={np.percentile(errs, 95):.1f}px"
         )
+        if all_points and in_bounds_all is not None:
+            txt += f" | all_in_bounds={int(in_bounds_all.sum())}/{X.shape[0]}"
         putText(img, txt, (20, 30), FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, LINE_AA)
 
-        imwrite(str(outp / f"reproj_{img_id:03d}.png"), img)
+        suffix = "all" if all_points else ""
+        name = f"reproj_{img_id:03d}{'_' + suffix if suffix else ''}.png"
+        imwrite(str(outp / name), img)
+
 
 
 def save_kp_overlay(image_bgr: np.ndarray, feat, out_path: Path, max_draw: int = 3000):
@@ -165,9 +213,6 @@ def save_match_overlay(
         flags=DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
     )
     imwrite(str(out_path), vis)
-
-
-
 
 REASON_NAMES = {
     1: "non_finite",
