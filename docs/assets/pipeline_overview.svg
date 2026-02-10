@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 650">
+  <defs>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4F46E5;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7C3AED;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="stageGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F8FAFC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#E2E8F0;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="900" height="650" fill="#F1F5F9"/>
+  
+  <!-- Header -->
+  <rect x="20" y="20" width="860" height="60" rx="10" fill="url(#headerGrad)" filter="url(#shadow)"/>
+  <text x="450" y="58" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="white">GeoFuse-SFM Pipeline</text>
+  
+  <!-- Input Section -->
+  <rect x="40" y="100" width="820" height="80" rx="8" fill="#DBEAFE" stroke="#3B82F6" stroke-width="2" filter="url(#shadow)"/>
+  <text x="60" y="125" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1E40AF">INPUTS</text>
+  
+  <!-- Input boxes -->
+  <rect x="60" y="135" width="120" height="35" rx="5" fill="white" stroke="#3B82F6"/>
+  <text x="120" y="158" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#1E40AF">📷 Images</text>
+  
+  <rect x="200" y="135" width="120" height="35" rx="5" fill="white" stroke="#3B82F6"/>
+  <text x="260" y="158" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#1E40AF">📐 K / Cameras</text>
+  
+  <rect x="340" y="135" width="120" height="35" rx="5" fill="white" stroke="#3B82F6"/>
+  <text x="400" y="158" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#1E40AF">🎭 Masks (opt)</text>
+  
+  <!-- Mode indicator -->
+  <rect x="560" y="115" width="280" height="55" rx="5" fill="#FEF3C7" stroke="#F59E0B"/>
+  <text x="700" y="138" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#92400E">Mode Detection:</text>
+  <text x="700" y="156" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#92400E">cams provided → MULTICAM | K only → SINGLECAM</text>
+  
+  <!-- Arrow down -->
+  <path d="M450 180 L450 200 L440 200 L450 215 L460 200 L450 200" fill="#64748B"/>
+  
+  <!-- Stage 1: Feature Extraction -->
+  <rect x="150" y="220" width="600" height="50" rx="8" fill="url(#stageGrad)" stroke="#94A3B8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="180" y="250" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">1. Feature Extraction</text>
+  <text x="400" y="250" font-family="Arial, sans-serif" font-size="11" fill="#64748B">SIFT with configurable contrast (textureless preset: 0.004)</text>
+  
+  <!-- Arrow -->
+  <path d="M450 270 L450 285 L440 285 L450 300 L460 285 L450 285" fill="#64748B"/>
+  
+  <!-- Stage 2: Matching -->
+  <rect x="150" y="305" width="600" height="50" rx="8" fill="url(#stageGrad)" stroke="#94A3B8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="180" y="335" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">2. Pairwise Matching</text>
+  <text x="400" y="335" font-family="Arial, sans-serif" font-size="11" fill="#64748B">Multicam: Epipolar + Contour | Singlecam: E-RANSAC</text>
+  
+  <!-- Arrow -->
+  <path d="M450 355 L450 370 L440 370 L450 385 L460 370 L450 370" fill="#64748B"/>
+  
+  <!-- Stage 3: Tracks -->
+  <rect x="150" y="390" width="290" height="50" rx="8" fill="url(#stageGrad)" stroke="#94A3B8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="180" y="420" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">3. Track Building</text>
+  <text x="350" y="420" font-family="Arial, sans-serif" font-size="11" fill="#64748B">Union-find</text>
+  
+  <!-- Stage 4: Init -->
+  <rect x="460" y="390" width="290" height="50" rx="8" fill="url(#stageGrad)" stroke="#94A3B8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="490" y="420" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">4. Initialization</text>
+  <text x="660" y="420" font-family="Arial, sans-serif" font-size="11" fill="#64748B">Seed points</text>
+  
+  <!-- Arrow -->
+  <path d="M450 440 L450 455 L440 455 L450 470 L460 455 L450 455" fill="#64748B"/>
+  
+  <!-- Stage 5: Registration (larger, main loop) -->
+  <rect x="100" y="475" width="700" height="60" rx="8" fill="#DCFCE7" stroke="#22C55E" stroke-width="2" filter="url(#shadow)"/>
+  <text x="130" y="505" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#166534">5. Incremental Registration Loop</text>
+  <text x="130" y="522" font-family="Arial, sans-serif" font-size="10" fill="#166534">PnP (singlecam) / Known pose (multicam) → Triangulate (min 3 views) → Local BA (optional)</text>
+  
+  <!-- Loop arrow -->
+  <path d="M780 505 Q820 505 820 490 Q820 475 780 475" fill="none" stroke="#22C55E" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="830" y="492" font-family="Arial, sans-serif" font-size="9" fill="#166534">loop</text>
+  
+  <!-- Arrow -->
+  <path d="M450 535 L450 550 L440 550 L450 565 L460 550 L450 550" fill="#64748B"/>
+  
+  <!-- Stage 6: Cleanup -->
+  <rect x="150" y="570" width="600" height="50" rx="8" fill="url(#stageGrad)" stroke="#94A3B8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="180" y="600" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155">6. Outlier Removal</text>
+  <text x="380" y="600" font-family="Arial, sans-serif" font-size="11" fill="#64748B">Strict reprojection filter + Spatial filter</text>
+  
+  <!-- Output Section -->
+  <rect x="560" y="570" width="180" height="50" rx="8" fill="#D1FAE5" stroke="#10B981" stroke-width="2"/>
+  <text x="650" y="592" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#065F46">OUTPUT</text>
+  <text x="650" y="608" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#065F46">Sparse PLY + Poses</text>
+  
+  <!-- Future: Dense Fusion -->
+  <rect x="300" y="625" width="300" height="20" rx="5" fill="#FEE2E2" stroke="#EF4444" stroke-dasharray="4"/>
+  <text x="450" y="639" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#991B1B">🔮 Dense Fusion (Coming Soon)</text>
+</svg>
