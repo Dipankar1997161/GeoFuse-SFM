@@ -9,6 +9,8 @@ from cv2 import (KeyPoint, DMatch, FlannBasedMatcher, BFMatcher,
                  SIFT_create, ORB_create, triangulatePoints, findEssentialMat, cvtColor)
 import numpy as np
 
+from src.pipeline.config import FeatureConfig
+
 MatcherType = Literal["sift", "orb"]
 
 
@@ -22,7 +24,7 @@ def _to_xy(kps: List[KeyPoint]) -> np.ndarray:
     return np.array([kp.pt for kp in kps], dtype=np.float32)
 
 
-def detect_and_describe(image_bgr: np.ndarray, method: MatcherType = "sift", mask: np.ndarray | None = None) -> Features:
+def detect_and_describe(image_bgr: np.ndarray, method: MatcherType = "sift", mask: np.ndarray | None = None, feature_config: Optional["FeatureConfig"] = None) -> Features:
     """
     Detect keypoints + descriptors.
     SIFT gives strong SfM baseline. ORB is faster but less stable.
@@ -30,11 +32,17 @@ def detect_and_describe(image_bgr: np.ndarray, method: MatcherType = "sift", mas
     gray = cvtColor(image_bgr, COLOR_BGR2GRAY)
 
     if method == "sift":
-        # More keypoints -> more potential tracks/points
-        det = SIFT_create(nfeatures=150000,
-                              contrastThreshold=0.004,  # default ~0.04, this is huge change
-                              edgeThreshold=10,
-                              sigma=1.2)
+        if feature_config is not None:
+            det = SIFT_create(
+            nfeatures=feature_config.sift_nfeatures,
+            nOctaveLayers=feature_config.sift_nOctaveLayers,
+            contrastThreshold=feature_config.sift_contrastThreshold,
+            edgeThreshold=feature_config.sift_edgeThreshold,
+            sigma=feature_config.sift_sigma,
+            )
+        else:
+            # Default SIFT (for textured surfaces)
+            det = SIFT_create(nfeatures=150000)
         kps, desc = det.detectAndCompute(gray, mask)
         if desc is None or len(kps) < 2:
             return Features(np.zeros((0, 2), np.float32), np.zeros((0, 128), np.float32))
