@@ -12,7 +12,9 @@ import numpy as np
 import cv2
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
-
+from src.geometry_utils.reprojection import project_points as project_points_geom
+from cv2 import circle, line, putText, imwrite, cvtColor
+from cv2 import COLOR_RGB2BGR, COLOR_GRAY2BGR, FONT_HERSHEY_SIMPLEX, LINE_AA
 
 def project_all_points_to_all_cameras(
     out_dir: str,
@@ -25,58 +27,46 @@ def project_all_points_to_all_cameras(
     silhouettes: Optional[List[np.ndarray]] = None,
 ):
     """
-    Project ALL points to ALL cameras, not just the ones that contributed.
-    
-    Works for both MULTICAM and SINGLECAM:
-    - Multicam: pass cams (list of DecomposedCamera)
-    - Singlecam: pass K (shared intrinsic matrix)
-    
-    Color coding:
-    - GREEN dot: observed keypoint (if this camera contributed to this point)
-    - RED dot: projected 3D point location
-    - WHITE line: good reprojection (< err_thresh_px)
-    - YELLOW line: bad reprojection (>= err_thresh_px)
-    - CYAN dot: projected point with NO observation in this view
+    Project ALL points to ALL registered images (multicam or singlecam).
+    Uses the canonical projector: project_points_geom (NaNs for invalid depth).
     """
-    from cv2 import circle, line, putText, imwrite, cvtColor
-    from cv2 import COLOR_RGB2BGR, COLOR_GRAY2BGR, FONT_HERSHEY_SIMPLEX, LINE_AA
     
     # Validate inputs
     if cams is None and K is None:
         raise ValueError("Must provide either cams (multicam) or K (singlecam)")
-    
+
     is_multicam = cams is not None
-    
+
     outp = Path(out_dir)
     outp.mkdir(parents=True, exist_ok=True)
-    
+
     cam_poses = sfm_result.cam_poses
     X = np.asarray(sfm_result.X, np.float64)
     tracks = sfm_result.tracks
     feats = sfm_result.feats
     track_to_point = sfm_result.track_to_point
-    
-    # Invert: pid -> tid
+
+    # pid -> tid
     point_to_track = {pid: tid for tid, pid in track_to_point.items()}
-    
     n_points = X.shape[0]
-    print(f"[project_all] Projecting {n_points} points to {len(sfm_result.registered_images)} cameras...")
+
+    print(f"[project_all] Projecting {n_points} points to {len(sfm_result.registered_images)} registered images...")
     print(f"[project_all] Mode: {'MULTICAM' if is_multicam else 'SINGLECAM'}")
-    
+
     for img_id in sfm_result.registered_images:
         img = images[img_id].copy()
         if img.ndim == 2:
             img = cvtColor(img, COLOR_GRAY2BGR)
         elif img.shape[2] == 3:
             img = cvtColor(img, COLOR_RGB2BGR)
-        
+
         h, w = img.shape[:2]
-        
+
         R, t = cam_poses[img_id]
         R = np.asarray(R, np.float64)
-        t = np.asarray(t, np.float64).reshape(3, 1)
-        
-        # Get K for this view
+        t = np.asarray(t, np.float64)
+
+        # K for this view
         if is_multicam:
             if hasattr(cams[img_id], "K"):
                 K_view = np.asarray(cams[img_id].K, np.float64)
@@ -84,101 +74,106 @@ def project_all_points_to_all_cameras(
                 K_view = np.asarray(cams[img_id][0], np.float64)
         else:
             K_view = np.asarray(K, np.float64)
-        
-        # Get silhouette for this view (if available)
+
+        # Optional silhouette
         sil = None
         if silhouettes is not None and img_id < len(silhouettes):
             sil = silhouettes[img_id]
-            if sil.ndim == 3:
+            if sil is not None and sil.ndim == 3:
                 sil = sil[:, :, 0]
-        
-        observed_count = 0
-        unobserved_count = 0
+
+        # Vectorized projection of ALL points
+        uv = project_points_geom(X=X, K=K_view, R=R, t=t)   # (N,2), NaNs for invalid z
+        valid = np.isfinite(uv).all(axis=1)
+
+        u = uv[:, 0]
+        v = uv[:, 1]
+        in_bounds = valid & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        outside_img = int((valid & ~in_bounds).sum())
+
+        # Observed mask + reprojection error (only meaningful for points with obs in this view)
+        observed = np.zeros(n_points, dtype=bool)
+        err = np.full(n_points, np.nan, dtype=np.float64)
+        uv_obs_arr = np.full((n_points, 2), np.nan, dtype=np.float64)
+
+        for pid, tid in point_to_track.items():
+            tr = tracks[tid]
+            if img_id not in tr.obs:
+                continue
+            kp_id = tr.obs[img_id]
+            uv_obs = feats[img_id].kpts_xy[kp_id].astype(np.float64)
+            observed[pid] = True
+            uv_obs_arr[pid] = uv_obs
+            if in_bounds[pid]:
+                err[pid] = float(np.linalg.norm(uv[pid] - uv_obs))
+
+        observed_in_bounds = in_bounds & observed
+        unobserved_in_bounds = in_bounds & ~observed
+
+        observed_count = int(observed_in_bounds.sum())
+        unobserved_count = int(unobserved_in_bounds.sum())
+
         outside_silhouette = 0
-        outside_image = 0
-        
-        proj_data = []  # (uv_proj, uv_obs or None, error or None, is_observed)
-        
-        for pid in range(n_points):
-            X_pt = X[pid].reshape(3, 1)
-            
-            # Project
-            Xc = R @ X_pt + t
-            z = float(Xc[2, 0])
-            
-            if z <= 1e-6:
-                continue
-            
-            uv_proj = K_view @ Xc
-            uv_proj = uv_proj[:2, 0] / uv_proj[2, 0]
-            
-            u, v = int(round(uv_proj[0])), int(round(uv_proj[1]))
-            
-            # Check if inside image
-            if u < 0 or u >= w or v < 0 or v >= h:
-                outside_image += 1
-                continue
-            
-            # Check if inside silhouette
-            if sil is not None:
-                if sil[v, u] < 128:  # Outside silhouette (background)
-                    outside_silhouette += 1
-            
-            # Check if this camera observed this point
-            is_observed = False
-            uv_obs = None
-            error = None
-            
-            if pid in point_to_track:
-                tid = point_to_track[pid]
-                tr = tracks[tid]
-                if img_id in tr.obs:
-                    is_observed = True
-                    observed_count += 1
-                    kp_id = tr.obs[img_id]
-                    uv_obs = feats[img_id].kpts_xy[kp_id].astype(np.float64)
-                    error = float(np.linalg.norm(uv_proj - uv_obs))
-                else:
-                    unobserved_count += 1
+        if sil is not None:
+            uu = np.round(u[in_bounds]).astype(np.int32)
+            vv = np.round(v[in_bounds]).astype(np.int32)
+            outside_silhouette = int(np.sum(sil[vv, uu] < 128))
+
+        # Prepare draw list: draw unobserved first, then observed on top
+        draw_ids = np.where(in_bounds)[0]
+
+        # Keep images readable: sample if too many
+        if draw_ids.size > max_draw_points:
+            # Bias to include all observed-in-bounds (up to max), then fill with unobserved
+            obs_ids = np.where(observed_in_bounds)[0]
+            unobs_ids = np.where(unobserved_in_bounds)[0]
+
+            take_obs = obs_ids
+            if take_obs.size > max_draw_points:
+                # take worst errors first if too many observed
+                obs_err = err[take_obs]
+                order = np.argsort(-(np.nan_to_num(obs_err, nan=-1.0)))
+                take_obs = take_obs[order[:max_draw_points]]
+                take_unobs = np.array([], dtype=np.int64)
             else:
-                unobserved_count += 1
-            
-            proj_data.append((uv_proj, uv_obs, error, is_observed))
-        
-        # Sort: draw unobserved first, then observed (so observed are on top)
-        proj_data.sort(key=lambda x: (x[3], x[2] if x[2] is not None else 0))
-        
+                remaining = max_draw_points - take_obs.size
+                if unobs_ids.size > remaining:
+                    take_unobs = np.random.choice(unobs_ids, size=remaining, replace=False)
+                else:
+                    take_unobs = unobs_ids
+            draw_ids = np.concatenate([take_unobs, take_obs])
+        else:
+            # reorder: unobserved first
+            draw_ids = np.concatenate([np.where(unobserved_in_bounds)[0], np.where(observed_in_bounds)[0]])
+
         # Draw
-        for uv_proj, uv_obs, error, is_observed in proj_data[:max_draw_points]:
-            p_i = (int(round(uv_proj[0])), int(round(uv_proj[1])))
-            
-            if is_observed and uv_obs is not None:
-                o_i = (int(round(uv_obs[0])), int(round(uv_obs[1])))
-                
-                # Draw observation (green)
-                circle(img, o_i, 4, (0, 255, 0), -1)
-                
-                # Draw projection (red)
-                circle(img, p_i, 3, (0, 0, 255), -1)
-                
-                # Draw line
-                col = (255, 255, 255) if error <= err_thresh_px else (0, 255, 255)
+        for pid in draw_ids:
+            p = uv[pid]
+            p_i = (int(round(p[0])), int(round(p[1])))
+
+            if observed[pid] and np.isfinite(uv_obs_arr[pid]).all():
+                o = uv_obs_arr[pid]
+                o_i = (int(round(o[0])), int(round(o[1])))
+                circle(img, o_i, 4, (0, 255, 0), -1)      # observed (green)
+                circle(img, p_i, 3, (0, 0, 255), -1)      # projected (red)
+                e = err[pid]
+                col = (255, 255, 255) if (np.isfinite(e) and e <= err_thresh_px) else (0, 255, 255)
                 line(img, o_i, p_i, col, 1)
             else:
-                # Unobserved: draw cyan dot
-                circle(img, p_i, 3, (255, 255, 0), -1)  # Cyan in BGR
-        
-        # Summary text
-        txt1 = f"observed={observed_count} unobserved={unobserved_count}"
-        txt2 = f"outside_img={outside_image}"
+                circle(img, p_i, 3, (255, 255, 0), -1)    # unobserved (cyan-ish)
+
+        # Summary
+        txt1 = f"observed={observed_count}  unobserved={unobserved_count}"
+        txt2 = f"valid={int(valid.sum())}  outside_img={outside_img}"
         if sil is not None:
-            txt2 += f" outside_sil={outside_silhouette}"
+            txt2 += f"  outside_sil={outside_silhouette}"
         putText(img, txt1, (20, 30), FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, LINE_AA)
         putText(img, txt2, (20, 60), FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, LINE_AA)
-        
+
         imwrite(str(outp / f"all_proj_{img_id:03d}.png"), img)
-    
+
     print(f"[project_all] Saved to {out_dir}")
+
 
 
 def analyze_point_statistics(
