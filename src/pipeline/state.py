@@ -10,9 +10,12 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Set
 import numpy as np
 
-from src.features import Features
-from src.tracks import Track
-from data_io.camera import DecomposedCamera
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.features import Features
+    from src.tracks import Track
+    from data_io.camera import DecomposedCamera
 
 
 @dataclass

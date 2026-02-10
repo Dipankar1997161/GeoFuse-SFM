@@ -9,7 +9,10 @@ from cv2 import (KeyPoint, DMatch, FlannBasedMatcher, BFMatcher,
                  SIFT_create, ORB_create, triangulatePoints, findEssentialMat, cvtColor)
 import numpy as np
 
-from src.pipeline.config import FeatureConfig
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.pipeline.config import FeatureConfig
 
 MatcherType = Literal["sift", "orb"]
 
