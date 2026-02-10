@@ -1,9 +1,11 @@
 """
-DIAGNOSTIC FUNCTIONS FOR MULTICAM SFM
+src/diagnostics/sfm_diagnostics.py
+
+Diagnostic functions for SfM (works for BOTH multicam and singlecam).
 
 1. project_all_points_to_all_cameras - Project EVERY point to EVERY camera
 2. analyze_point_statistics - Get detailed stats on points including outliers
-3. analyze_track_coverage - See how many views each track spans
+3. find_points_outside_silhouettes - Find points projecting outside masks
 """
 
 import numpy as np
@@ -16,7 +18,8 @@ def project_all_points_to_all_cameras(
     out_dir: str,
     images: List[np.ndarray],
     sfm_result,
-    cams,  # Required for multicam
+    cams=None,                              # Optional: for multicam
+    K: Optional[np.ndarray] = None,         # Optional: for singlecam
     max_draw_points: int = 500,
     err_thresh_px: float = 5.0,
     silhouettes: Optional[List[np.ndarray]] = None,
@@ -24,10 +27,9 @@ def project_all_points_to_all_cameras(
     """
     Project ALL points to ALL cameras, not just the ones that contributed.
     
-    This helps identify:
-    - Points that are spatially far but don't appear in any image
-    - Points that should be visible but aren't being tracked
-    - Coordinate system issues
+    Works for both MULTICAM and SINGLECAM:
+    - Multicam: pass cams (list of DecomposedCamera)
+    - Singlecam: pass K (shared intrinsic matrix)
     
     Color coding:
     - GREEN dot: observed keypoint (if this camera contributed to this point)
@@ -38,6 +40,12 @@ def project_all_points_to_all_cameras(
     """
     from cv2 import circle, line, putText, imwrite, cvtColor
     from cv2 import COLOR_RGB2BGR, COLOR_GRAY2BGR, FONT_HERSHEY_SIMPLEX, LINE_AA
+    
+    # Validate inputs
+    if cams is None and K is None:
+        raise ValueError("Must provide either cams (multicam) or K (singlecam)")
+    
+    is_multicam = cams is not None
     
     outp = Path(out_dir)
     outp.mkdir(parents=True, exist_ok=True)
@@ -53,6 +61,7 @@ def project_all_points_to_all_cameras(
     
     n_points = X.shape[0]
     print(f"[project_all] Projecting {n_points} points to {len(sfm_result.registered_images)} cameras...")
+    print(f"[project_all] Mode: {'MULTICAM' if is_multicam else 'SINGLECAM'}")
     
     for img_id in sfm_result.registered_images:
         img = images[img_id].copy()
@@ -68,10 +77,13 @@ def project_all_points_to_all_cameras(
         t = np.asarray(t, np.float64).reshape(3, 1)
         
         # Get K for this view
-        if hasattr(cams[img_id], "K"):
-            K = np.asarray(cams[img_id].K, np.float64)
+        if is_multicam:
+            if hasattr(cams[img_id], "K"):
+                K_view = np.asarray(cams[img_id].K, np.float64)
+            else:
+                K_view = np.asarray(cams[img_id][0], np.float64)
         else:
-            K = np.asarray(cams[img_id][0], np.float64)
+            K_view = np.asarray(K, np.float64)
         
         # Get silhouette for this view (if available)
         sil = None
@@ -97,7 +109,7 @@ def project_all_points_to_all_cameras(
             if z <= 1e-6:
                 continue
             
-            uv_proj = K @ Xc
+            uv_proj = K_view @ Xc
             uv_proj = uv_proj[:2, 0] / uv_proj[2, 0]
             
             u, v = int(round(uv_proj[0])), int(round(uv_proj[1]))
@@ -111,7 +123,6 @@ def project_all_points_to_all_cameras(
             if sil is not None:
                 if sil[v, u] < 128:  # Outside silhouette (background)
                     outside_silhouette += 1
-                    # Still draw it but mark differently
             
             # Check if this camera observed this point
             is_observed = False
@@ -159,7 +170,9 @@ def project_all_points_to_all_cameras(
         
         # Summary text
         txt1 = f"observed={observed_count} unobserved={unobserved_count}"
-        txt2 = f"outside_img={outside_image} outside_sil={outside_silhouette}"
+        txt2 = f"outside_img={outside_image}"
+        if sil is not None:
+            txt2 += f" outside_sil={outside_silhouette}"
         putText(img, txt1, (20, 30), FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, LINE_AA)
         putText(img, txt2, (20, 60), FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, LINE_AA)
         
@@ -170,17 +183,14 @@ def project_all_points_to_all_cameras(
 
 def analyze_point_statistics(
     sfm_result,
-    cams,
+    cams=None,                              # Optional: for multicam
+    K: Optional[np.ndarray] = None,         # Optional: for singlecam  
     percentile_threshold: float = 95.0,
 ):
     """
     Analyze point cloud statistics to identify outliers.
     
-    Prints:
-    - Centroid and bounding box
-    - Distance distribution
-    - Points beyond percentile threshold
-    - Track length distribution
+    Works for both MULTICAM and SINGLECAM.
     """
     X = np.asarray(sfm_result.X, np.float64)
     track_to_point = sfm_result.track_to_point
@@ -249,7 +259,7 @@ def analyze_point_statistics(
                 tid = point_to_track[pid]
                 tr = tracks[tid]
                 track_len = len(tr.obs)
-                obs_views = list(tr.obs.keys())[:5]  # First 5 views
+                obs_views = list(tr.obs.keys())[:5]
             
             print(f"    pid={pid}: dist={dist:.4f} pos=[{X_pt[0]:.3f}, {X_pt[1]:.3f}, {X_pt[2]:.3f}] "
                   f"track_len={track_len} views={obs_views}")
@@ -287,58 +297,21 @@ def analyze_point_statistics(
     }
 
 
-def analyze_contour_matching_stats(
-    contour_pairwise: Dict[Tuple[int, int], List],
-    sift_pairwise: Dict[Tuple[int, int], List],
-    n_images: int,
-):
-    """
-    Analyze contour and SIFT matching statistics.
-    """
-    print("\n" + "="*60)
-    print("MATCHING STATISTICS")
-    print("="*60)
-    
-    # SIFT stats
-    print(f"\nSIFT Matching:")
-    print(f"  Pairs with matches: {len(sift_pairwise)}")
-    if sift_pairwise:
-        sift_counts = [len(v) for v in sift_pairwise.values()]
-        print(f"  Total matches: {sum(sift_counts)}")
-        print(f"  Matches per pair: mean={np.mean(sift_counts):.1f} median={np.median(sift_counts):.1f}")
-    
-    # Contour stats
-    print(f"\nContour Matching:")
-    print(f"  Pairs with matches: {len(contour_pairwise)}")
-    if contour_pairwise:
-        contour_counts = [len(v) for v in contour_pairwise.values()]
-        print(f"  Total matches: {sum(contour_counts)}")
-        print(f"  Matches per pair: mean={np.mean(contour_counts):.1f} median={np.median(contour_counts):.1f}")
-    
-    # Coverage per image
-    print(f"\nPer-image coverage:")
-    for img_id in range(n_images):
-        sift_pairs = sum(1 for (i, j) in sift_pairwise if i == img_id or j == img_id)
-        contour_pairs = sum(1 for (i, j) in contour_pairwise if i == img_id or j == img_id)
-        sift_matches = sum(len(v) for (i, j), v in sift_pairwise.items() if i == img_id or j == img_id)
-        contour_matches = sum(len(v) for (i, j), v in contour_pairwise.items() if i == img_id or j == img_id)
-        
-        print(f"  img{img_id:02d}: SIFT pairs={sift_pairs:2d} matches={sift_matches:4d} | "
-              f"Contour pairs={contour_pairs:2d} matches={contour_matches:4d}")
-
-
 def find_points_outside_silhouettes(
     sfm_result,
     cams,
     silhouettes: List[np.ndarray],
+    K: Optional[np.ndarray] = None,         # For singlecam
     margin_px: int = 3,
     min_outside_ratio: float = 0.5,
 ):
     """
     Find points that project outside the silhouette in too many views.
     
-    Returns list of (pid, outside_ratio, views_checked) tuples.
+    Works for both MULTICAM and SINGLECAM.
     """
+    is_multicam = cams is not None
+    
     X = np.asarray(sfm_result.X, np.float64)
     cam_poses = sfm_result.cam_poses
     track_to_point = sfm_result.track_to_point
@@ -369,10 +342,14 @@ def find_points_outside_silhouettes(
             R = np.asarray(R, np.float64)
             t = np.asarray(t, np.float64).reshape(3, 1)
             
-            if hasattr(cams[img_id], "K"):
-                K = np.asarray(cams[img_id].K, np.float64)
+            # Get K
+            if is_multicam:
+                if hasattr(cams[img_id], "K"):
+                    K_view = np.asarray(cams[img_id].K, np.float64)
+                else:
+                    K_view = np.asarray(cams[img_id][0], np.float64)
             else:
-                K = np.asarray(cams[img_id][0], np.float64)
+                K_view = np.asarray(K, np.float64)
             
             # Project
             Xc = R @ X_pt + t
@@ -381,7 +358,7 @@ def find_points_outside_silhouettes(
             if z <= 1e-6:
                 continue
             
-            uv_proj = K @ Xc
+            uv_proj = K_view @ Xc
             uv_proj = uv_proj[:2, 0] / uv_proj[2, 0]
             
             u, v = int(round(uv_proj[0])), int(round(uv_proj[1]))
@@ -415,7 +392,6 @@ def find_points_outside_silhouettes(
             if outside_ratio >= min_outside_ratio:
                 bad_points.append((pid, outside_ratio, total))
     
-    # Sort by outside ratio
     bad_points.sort(key=lambda x: x[1], reverse=True)
     
     print(f"\n[silhouette check] Found {len(bad_points)} points with >{min_outside_ratio*100:.0f}% outside silhouette")
