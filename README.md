@@ -229,12 +229,6 @@ python -m scripts.run_multicam --feature_preset textureless ...
 
 ---
 
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
 ## 🙏 Acknowledgments
 
 - BBM Multi-camera dataset
