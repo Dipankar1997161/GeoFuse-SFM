@@ -31,6 +31,8 @@ from utils.checkpoint import save_checkpoint, load_checkpoint, checkpoint_exists
 
 STAGES = ["sparse", "mvs", "propagate", "filter", "diagnosis", "fusion"]
 
+EXPORT_FORMATS = ["colmap", "colmap_text", "nerfstudio", "instant_ngp", "3dgs"]
+
 
 def build_config_from_args(args, is_multicam: bool) -> SfMConfig:
     """
@@ -112,6 +114,12 @@ Examples:
 
   # Singlecam (no --cameras_dir)
   python -m scripts.run_multicam --images_dir Data/fountain/images --K_file Data/fountain/K.txt --visualize
+
+  # Export to COLMAP + Nerfstudio for NeRF training
+  python -m scripts.run_multicam --images_dir Data/fountain/images --K_file Data/fountain/K.txt --export colmap nerfstudio
+ 
+  # Export to 3DGS format
+  python -m scripts.run_multicam --images_dir Data/fountain/images --K_file Data/fountain/K.txt --export 3dgs
         """
     )
 
@@ -203,6 +211,19 @@ Examples:
                         help="Max reproj in any view for strict filter (default: 5.0)")
     parser.add_argument("--adaptive_spatial_filtering", action="store_true", default=True)
     parser.add_argument("--no_adaptive_spatial_filtering", action="store_true", default=False)
+
+    # =========================================================
+    # EXPORT CONFIG
+    # =========================================================
+    parser.add_argument("--export", type=str, nargs="+", default=None,
+                        choices=EXPORT_FORMATS,
+                        help=f"Export formats: {', '.join(EXPORT_FORMATS)}")
+    
+    parser.add_argument("--export_dir", type=str, default=None,
+                        help="Export output directory (default: <output>/exports)")
+    
+    parser.add_argument("--copy_images", action="store_true",
+                        help="Copy images to export directory (for nerfstudio/instant_ngp)")
 
     # =========================================================
     # DIAGNOSTICS
@@ -347,6 +368,38 @@ Examples:
 
     else:
         sfm_result = load_checkpoint(CP_SFM)
+
+    if STAGES.index("sparse") >= end_stage:
+        print("\n[Done] Sparse stage complete.")
+        return
+    
+    # =========================================================
+    # EXPORT STAGE
+    # =========================================================
+    if args.export and sfm_result is not None:
+        print("\n" + "=" * 70)
+        print("STAGE: EXPORT")
+        print("=" * 70)
+        
+        from data_io.export import export_reconstruction        
+        export_dir = Path(args.export_dir) if args.export_dir else (output_dir / "exports")
+        
+        print(f"[Export] Formats: {args.export}")
+        print(f"[Export] Output: {export_dir}")
+        
+        export_results = export_reconstruction(
+            sfm_result=sfm_result,
+            images_dir=args.images_dir,
+            output_dir=str(export_dir),
+            cams=cams,
+            K=K,
+            formats=args.export,
+            copy_images=args.copy_images,
+        )
+        
+        print(f"\n[Export] Completed exports:")
+        for fmt, path in export_results.items():
+            print(f"  {fmt}: {path}")
 
     if STAGES.index("sparse") >= end_stage:
         print("\n[Done] Sparse stage complete.")
